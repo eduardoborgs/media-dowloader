@@ -21,7 +21,6 @@ class MediaDownloader:
             "no_warnings": True,
             "no_color": True,
             "extractor_args": {
-                # Ignora a versão web e força APIs nativas de aplicativos móveis
                 "youtube": ["player_skip=web", "player_client=android,ios"]
             }
         }
