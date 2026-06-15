@@ -20,7 +20,7 @@ class MediaDownloader:
             "quiet": True,
             "no_warnings": True,
             "no_color": True,
-            # Configurações Anti-Bloqueio do YouTube
+            "cookiefile": "youtube_cookies.txt",
             "extractor_args": {
                 "youtube": ["client=android,mweb"]
             },
