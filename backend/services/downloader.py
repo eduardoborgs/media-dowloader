@@ -35,7 +35,12 @@ class MediaDownloader:
         )
 
     def _sync_get_cobalt_url(self, url: str, format_id: str, media_type: str) -> str:
-        api_endpoint = "https://api.cobalt.tools/api/json"
+        api_endpoints = [
+            "https://cobalt-api.pequla.com/api/json",
+            "https://cobalt.q-n.space/api/json",
+            "https://co.wuk.sh/api/json",
+            "https://api.cobalt.tools/api/json" 
+        ]
         
         payload = {
             "url": url,
@@ -54,20 +59,23 @@ class MediaDownloader:
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "User-Agent": "MediaGet/1.0"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
         
-        req = urllib.request.Request(api_endpoint, data=data, headers=headers, method="POST")
-        
-        try:
-            with urllib.request.urlopen(req) as response:
-                result = json.loads(response.read().decode("utf-8"))
+        for endpoint in api_endpoints:
+            req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=12) as response:
+                    result = json.loads(response.read().decode("utf-8"))
+                    status = result.get("status")
+                    
+                    if status in ["error", "rate-limit"]:
+                        continue 
+                    
+                    download_url = result.get("url")
+                    if download_url:
+                        return download_url
+            except Exception:
+                continue
                 
-                status = result.get("status")
-                if status in ["error", "rate-limit"]:
-                    raise ValueError(result.get("text", "Erro interno da API externa."))
-                
-                return result.get("url")
-                
-        except Exception as e:
-            raise ValueError(f"Não foi possível processar a requisição: {str(e)}")  
+        raise ValueError("Todos os servidores externos de processamento estão indisponíveis no momento. Tente novamente.")
