@@ -1,158 +1,73 @@
 import asyncio
-import os
-import uuid
-from pathlib import Path
+import json
+import urllib.request
 from typing import Tuple
 
-import yt_dlp
-
 from models.schemas import Format, MediaInfo
-from utils.cleanup import ensure_temp_dir
 from utils.validators import is_safe_url
-
-MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "300"))
-
 
 class MediaDownloader:
 
-    def _base_opts(self) -> dict:
-        return {
-            "quiet": True,
-            "no_warnings": True,
-            "no_color": True,
-            "extractor_args": {
-                "youtube": ["player_skip=web", "player_client=android,ios"]
-            }
-        }
-    
     async def get_info(self, url: str) -> MediaInfo:
         if not is_safe_url(url):
             raise ValueError("URL inválida ou não permitida.")
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._sync_get_info, url)
-
-    def _sync_get_info(self, url: str) -> MediaInfo:
-        opts = {**self._base_opts(), "skip_download": True}
-
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            try:
-                raw = ydl.extract_info(url, download=False)
-            except yt_dlp.utils.DownloadError as exc:
-                raise ValueError(f"Não foi possível acessar esta URL: {exc}")
-
-        if not raw:
-            raise ValueError("Nenhuma informação encontrada.")
-
+        
         return MediaInfo(
-            title=raw.get("title", "Sem título"),
-            thumbnail=raw.get("thumbnail"),
-            duration=raw.get("duration"),
-            uploader=raw.get("uploader", "Desconhecido"),
-            platform=raw.get("extractor_key", ""),
-            formats=self._parse_formats(raw),
+            title="Mídia pronta para download",
+            thumbnail="https://placehold.co/400x200/1e293b/a8a29e?text=M%C3%ADdia+Encontrada", 
+            duration=None,
+            uploader="Via API Externa (Cobalt)",
+            platform="Nuvem",
+            formats=[
+                Format(format_id="1080", ext="mp4", label="Alta Qualidade (1080p)", is_audio_only=False),
+                Format(format_id="720", ext="mp4", label="Qualidade Padrão (720p)", is_audio_only=False),
+                Format(format_id="audio", ext="mp3", label="Apenas Áudio (MP3)", is_audio_only=True)
+            ]
         )
 
-    def _parse_formats(self, info: dict) -> list[Format]:
-        raw_formats = info.get("formats", [])
-        result: list[Format] = []
-        seen: set[str] = set()
-
-        result.append(Format(
-            format_id="bestvideo+bestaudio/best",
-            ext="mp4",
-            label="Melhor qualidade (MP4)",
-            is_audio_only=False,
-        ))
-
-        combined = [
-            f for f in raw_formats
-            if f.get("vcodec") not in ("none", None)
-            and f.get("acodec") not in ("none", None)
-            and f.get("ext") in ("mp4", "webm")
-            and f.get("height")
-        ]
-        combined.sort(key=lambda f: f.get("height", 0), reverse=True)
-
-        for f in combined:
-            label = f"{f.get('height')}p ({f.get('ext', 'mp4')})"
-            if label not in seen:
-                seen.add(label)
-                result.append(Format(
-                    format_id=f["format_id"],
-                    ext=f.get("ext", "mp4"),
-                    label=label,
-                    filesize=f.get("filesize") or f.get("filesize_approx"),
-                    is_audio_only=False,
-                ))
-
-        has_audio = any(
-            f.get("vcodec") == "none" and f.get("acodec") not in ("none", None)
-            for f in raw_formats
-        )
-        if has_audio:
-            result.append(Format(
-                format_id="bestaudio/best",
-                ext="mp3",
-                label="Apenas áudio (MP3 192k)",
-                is_audio_only=True,
-            ))
-
-        return result[:12]
-
-    async def download(
-        self, url: str, format_id: str, media_type: str
-    ) -> Tuple[str, str, str]:
+    async def get_download_redirect(self, url: str, format_id: str, media_type: str) -> str:
         if not is_safe_url(url):
             raise ValueError("URL inválida ou não permitida.")
+        
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
-            None, self._sync_download, url, format_id, media_type
+            None, self._sync_get_cobalt_url, url, format_id, media_type
         )
 
-    def _sync_download(
-        self, url: str, format_id: str, media_type: str
-    ) -> Tuple[str, str, str]:
-        temp_dir = ensure_temp_dir()
-        file_id = uuid.uuid4().hex
-        output_tpl = str(temp_dir / f"{file_id}.%(ext)s")
-
-        if media_type == "audio":
-            opts = {
-                **self._base_opts(),
-                "format": "bestaudio/best",
-                "outtmpl": output_tpl,
-                "postprocessors": [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }],
-            }
+    def _sync_get_cobalt_url(self, url: str, format_id: str, media_type: str) -> str:
+        api_endpoint = "https://api.cobalt.tools/api/json"
+        
+        payload = {
+            "url": url,
+            "filenameStyle": "basic"
+        }
+        
+        if media_type == "audio" or format_id == "audio":
+            payload["downloadMode"] = "audio"
+            payload["audioFormat"] = "mp3"
         else:
-            opts = {
-                **self._base_opts(),
-                "format": format_id,
-                "outtmpl": output_tpl,
-                "merge_output_format": "mp4",
-            }
+            payload["downloadMode"] = "auto"
+            payload["videoQuality"] = format_id if format_id in ["1080", "720"] else "1080"
 
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            try:
-                info = ydl.extract_info(url, download=True)
-            except yt_dlp.utils.DownloadError as exc:
-                raise ValueError(f"Erro no download: {exc}")
-
-        for f in Path(temp_dir).glob(f"{file_id}.*"):
-            size_mb = os.path.getsize(f) / (1024 * 1024)
-            if size_mb > MAX_FILE_SIZE_MB:
-                f.unlink()
-                raise ValueError(
-                    f"Arquivo ({size_mb:.0f} MB) excede o limite de {MAX_FILE_SIZE_MB} MB."
-                )
-
-            ext = f.suffix.lstrip(".")
-            mime = "audio/mpeg" if ext == "mp3" else "video/mp4"
-            title = (info.get("title") or "download")[:60]
-            safe = "".join(c for c in title if c.isalnum() or c in " -_").strip()
-            return str(f), f"{safe or 'download'}.{ext}", mime
-
-        raise RuntimeError("Arquivo não encontrado após o download.")
+        data = json.dumps(payload).encode("utf-8")
+        
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "MediaGet/1.0"
+        }
+        
+        req = urllib.request.Request(api_endpoint, data=data, headers=headers, method="POST")
+        
+        try:
+            with urllib.request.urlopen(req) as response:
+                result = json.loads(response.read().decode("utf-8"))
+                
+                status = result.get("status")
+                if status in ["error", "rate-limit"]:
+                    raise ValueError(result.get("text", "Erro interno da API externa."))
+                
+                return result.get("url")
+                
+        except Exception as e:
+            raise ValueError(f"Não foi possível processar a requisição: {str(e)}")  

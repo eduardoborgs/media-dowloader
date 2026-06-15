@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, RedirectResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -65,40 +65,20 @@ async def get_media_info(request: Request, body: MediaRequest):
     except Exception:
         raise HTTPException(status_code=500, detail="Erro ao processar esta URL.")
 
-
 @app.get("/api/download")
 @limiter.limit("5/minute")
 async def download_media(
     request: Request,
     url: str = Query(..., description="URL da mídia"),
-    format_id: str = Query(default="bestvideo+bestaudio/best"),
+    format_id: str = Query(default="1080"),
     media_type: str = Query(default="video", pattern="^(video|audio)$"),
 ):
     try:
-        file_path, filename, mime_type = await downloader.download(
+        direct_link = await downloader.get_download_redirect(
             url=url, format_id=format_id, media_type=media_type
         )
-
-        file_size = os.path.getsize(file_path)
-
-        def stream_and_cleanup():
-            try:
-                with open(file_path, "rb") as fh:
-                    while chunk := fh.read(1024 * 1024):  
-                        yield chunk
-            finally:
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-
-        return StreamingResponse(
-            stream_and_cleanup(),
-            media_type=mime_type,
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                "Content-Length": str(file_size),
-                "X-Content-Type-Options": "nosniff",
-            },
-        )
+        
+        return RedirectResponse(url=direct_link)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception:
