@@ -1,6 +1,7 @@
 import asyncio
 import json
 import urllib.request
+import re
 from typing import Tuple
 
 from models.schemas import Format, MediaInfo
@@ -16,11 +17,10 @@ class MediaDownloader:
             title="Mídia pronta para download",
             thumbnail="https://placehold.co/400x200/1e293b/a8a29e?text=M%C3%ADdia+Encontrada", 
             duration=None,
-            uploader="Via API Externa (Cobalt)",
-            platform="Nuvem",
+            uploader="Servidor em Nuvem",
+            platform="MediaGet API",
             formats=[
-                Format(format_id="1080", ext="mp4", label="Alta Qualidade (1080p)", is_audio_only=False),
-                Format(format_id="720", ext="mp4", label="Qualidade Padrão (720p)", is_audio_only=False),
+                Format(format_id="best", ext="mp4", label="Melhor Qualidade de Vídeo", is_audio_only=False),
                 Format(format_id="audio", ext="mp3", label="Apenas Áudio (MP3)", is_audio_only=True)
             ]
         )
@@ -31,31 +31,62 @@ class MediaDownloader:
         
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
-            None, self._sync_get_cobalt_url, url, format_id, media_type
+            None, self._sync_route_download, url, media_type
         )
 
-    def _sync_get_cobalt_url(self, url: str, format_id: str, media_type: str) -> str:
+    def _sync_route_download(self, url: str, media_type: str) -> str:
+        # Roteamento inteligente por plataforma
+        if "youtube.com" in url or "youtu.be" in url:
+            return self._get_piped_url(url, media_type)
+        else:
+            return self._get_cobalt_v7_url(url, media_type)
+
+    def _get_piped_url(self, url: str, media_type: str) -> str:
+        # Extrai o ID do vídeo do YouTube
+        match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11}).*", url)
+        if not match:
+            raise ValueError("Link do YouTube inválido.")
+        video_id = match.group(1)
+        
+        # Piped API: Totalmente livre de captchas e bloqueios
+        api_url = f"https://pipedapi.kavin.rocks/streams/{video_id}"
+        req = urllib.request.Request(api_url, headers={"User-Agent": "Mozilla/5.0"})
+        
+        try:
+            with urllib.request.urlopen(req, timeout=15) as response:
+                data = json.loads(response.read().decode("utf-8"))
+                
+            if media_type == "audio":
+                streams = data.get("audioStreams", [])
+                if not streams: raise ValueError("Áudio indisponível.")
+                # Pega a melhor qualidade de áudio
+                streams.sort(key=lambda x: x.get("bitrate", 0), reverse=True)
+                return streams[0]["url"]
+            else:
+                # Prioriza vídeo que já possui áudio embutido (videoOnly = False)
+                streams = [s for s in data.get("videoStreams", []) if not s.get("videoOnly", True)]
+                if not streams:
+                    streams = data.get("videoStreams", [])
+                if not streams: raise ValueError("Vídeo indisponível.")
+                return streams[0]["url"]
+        except Exception:
+            raise ValueError("Servidores de processamento do YouTube estão sobrecarregados. Tente novamente.")
+
+    def _get_cobalt_v7_url(self, url: str, media_type: str) -> str:
+        # Nova especificação v7 do Cobalt (Endpoint principal)
         api_endpoints = [
-            "https://cobalt-api.pequla.com/api/json",
-            "https://cobalt.q-n.space/api/json",
-            "https://co.wuk.sh/api/json",
-            "https://api.cobalt.tools/api/json" 
+            "https://cobalt-api.pequla.com/",
+            "https://co.wuk.sh/",
+            "https://api.cobalt.tools/"
         ]
         
-        payload = {
-            "url": url,
-            "filenameStyle": "basic"
-        }
-        
-        if media_type == "audio" or format_id == "audio":
+        payload = {"url": url}
+        if media_type == "audio":
             payload["downloadMode"] = "audio"
-            payload["audioFormat"] = "mp3"
-        else:
-            payload["downloadMode"] = "auto"
-            payload["videoQuality"] = format_id if format_id in ["1080", "720"] else "1080"
 
         data = json.dumps(payload).encode("utf-8")
         
+        # Cabeçalhos estritos exigidos pela nova versão da API
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
@@ -67,9 +98,8 @@ class MediaDownloader:
             try:
                 with urllib.request.urlopen(req, timeout=12) as response:
                     result = json.loads(response.read().decode("utf-8"))
-                    status = result.get("status")
                     
-                    if status in ["error", "rate-limit"]:
+                    if result.get("status") in ["error", "rate-limit"]:
                         continue 
                     
                     download_url = result.get("url")
@@ -78,4 +108,4 @@ class MediaDownloader:
             except Exception:
                 continue
                 
-        raise ValueError("Todos os servidores externos de processamento estão indisponíveis no momento. Tente novamente.")
+        raise ValueError("Todos os servidores externos rejeitaram a conexão no momento.")
