@@ -20,7 +20,10 @@ class MediaDownloader:
             "quiet": True,
             "no_warnings": True,
             "no_color": True,
-            "cookiefile": "youtube_cookies.txt"
+            "extractor_args": {
+                # Ignora a versão web e força APIs nativas de aplicativos móveis
+                "youtube": ["player_skip=web", "player_client=android,ios"]
+            }
         }
     
     async def get_info(self, url: str) -> MediaInfo:
