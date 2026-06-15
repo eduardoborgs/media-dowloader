@@ -1,0 +1,11 @@
+# Pastas pesadas do Frontend 
+node_modules/
+dist/
+
+# Pastas pesadas e temporárias do Backend
+venv/
+.venv/
+__pycache__/
+
+# Arquivos secretos (NUNCA enviar para a internet)
+.env
