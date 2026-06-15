@@ -20,13 +20,7 @@ class MediaDownloader:
             "quiet": True,
             "no_warnings": True,
             "no_color": True,
-            "cookiefile": "youtube_cookies.txt",
-            "extractor_args": {
-                "youtube": ["client=android,mweb"]
-            },
-            "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            }
+            "cookiefile": "youtube_cookies.txt"
         }
     
     async def get_info(self, url: str) -> MediaInfo:
